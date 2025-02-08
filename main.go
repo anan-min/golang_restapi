@@ -1,8 +1,8 @@
 package main
 
 import (
-	// "database/sql"
-	"fmt"
+	"database/sql"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -11,7 +11,7 @@ import (
 	_ "github.com/proullon/ramsql/driver"
 )
 
-// var db *sql.DB
+var db *sql.DB
 
 type Movie struct {
 	ImdbID      string  `json:"imdbID"`
@@ -34,46 +34,58 @@ var movies = []Movie{
 }
 
 func getAllMoviesHandler(c echo.Context) error {
-	yearQueryParam := c.QueryParam("year")
-	var returnedMovies []Movie
+    yearStr := c.QueryParam("year")
+    year := -1 // Default value: -1 means no year filter
 
-	if yearQueryParam != "" {
-		year, err := strconv.Atoi(yearQueryParam)
-		if err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid year"})
-		}
+    if yearStr != "" {
+        var err error
+        year, err = strconv.Atoi(yearStr)
+        if err != nil {
+            return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid year format. Year must be an integer."})
+        }
+        if year < 0 { // Check for negative year values
+            return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid year value. Year must be non-negative."})
+        }
+    }
 
-		returnedMovies, err = getMoviesByYear(year)
-		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to query database"})
-		}
+    returnedMovies, err := getMoviesByYear(year)
+    if err != nil {
+        return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+    }
 
-		if len(returnedMovies) == 0 {
-			return c.JSON(http.StatusNotFound, map[string]string{"message": "No movies found for the given year"})
-		}
-
-		return c.JSON(http.StatusOK, returnedMovies)
-	}
-
-	return c.JSON(http.StatusOK, movies)
+    return c.JSON(http.StatusOK, returnedMovies)
 }
-
 
 func getMoviesByYear(year int) ([]Movie, error) {
-	var returnedMovies []Movie
-	// If year is -1, we want to return all movies
-	if year == -1 {
-		return movies, nil
-	} else {
-		for i := 0; i < len(movies); i++ {
-			if movies[i].Year == year {
-				returnedMovies = append(returnedMovies, movies[i])
-			}
-		}
-		return returnedMovies, nil
-	}
+    query := "SELECT imdb_id, title, year, rating, is_superhero FROM movies" 
 
+    var args []interface{} 
+    if year != -1 { 
+        query += " WHERE year = ?"
+        args = append(args, year) 
+    }
+
+    rows, err := db.Query(query, args...) // Use args... to pass the arguments
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var returnedMovies []Movie
+    for rows.Next() {
+        var movie Movie
+        if err := rows.Scan(&movie.ImdbID, &movie.Title, &movie.Year, &movie.Rating, &movie.IsSuperHero); err != nil {
+            return nil, err
+        }
+        returnedMovies = append(returnedMovies, movie)
+    }
+
+    return returnedMovies, nil
 }
+
+
+
+
 
 
 func getMovieByIdHandler(c echo.Context) error {
@@ -119,10 +131,59 @@ func createMovieHandler(c echo.Context) error {
 	return c.JSON(http.StatusCreated, newMovie)
 }
 
+func init() {
+	conn()
+	createMovieTable()
+	insertAllMovies(movies)
+}
 
+
+func conn() {
+	var err error
+	db, err = sql.Open("ramsql", "goimdb")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = db.Ping()
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func createMovieTable() { 
+	query := `
+		CREATE TABLE IF NOT EXISTS movies (
+		imdb_id VARCHAR(10) UNIQUE PRIMARY KEY NOT NULL,
+		title VARCHAR(255) NOT NULL,
+		year INT NOT NULL,
+		rating FLOAT NOT NULL,
+		is_superhero BOOLEAN NOT NULL
+	);`
+	_, err := db.Exec(query)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+
+func insertMovie(movie Movie) {
+	query := "INSERT INTO movies (imdb_id, title, year, rating, is_superhero) VALUES (?, ?, ?, ?, ?)"
+	_, err := db.Exec(query, movie.ImdbID, movie.Title, movie.Year, movie.Rating, movie.IsSuperHero)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+
+func insertAllMovies(movies []Movie) {
+	for _, movie := range movies {
+		insertMovie(movie)
+	}
+}
 
 func main() {
-	
+	conn()
 	e := echo.New()
 	// // Define routes
 	e.GET("/movies", getAllMoviesHandler)
@@ -131,6 +192,6 @@ func main() {
 
 	// // Start server
 	port := "2565"
-	fmt.Printf("Starting server on port %s...\n", port)
-	fmt.Println(e.Start(":" + port))
+	log.Printf("Starting server on port %s...\n", port)
+	log.Println(e.Start(":" + port))
 }
