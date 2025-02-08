@@ -83,11 +83,6 @@ func getMoviesByYear(year int) ([]Movie, error) {
     return returnedMovies, nil
 }
 
-
-
-
-
-
 func getMovieByIdHandler(c echo.Context) error {
 	idParam := c.Param("id")
 	if idParam == "" {
@@ -99,12 +94,11 @@ func getMovieByIdHandler(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid id format"})
 	}	
 
+	query := "SELECT imdb_id, title, year, rating, is_superhero FROM movies WHERE imdb_id = ?"
 	var movie Movie
-	for i := 0; i < len(movies); i++ {
-		if movies[i].ImdbID == idParam {
-			movie = movies[i]
-			return c.JSON(http.StatusOK, movie)
-		}
+	err = db.QueryRow(query, idParam).Scan(&movie.ImdbID, &movie.Title, &movie.Year, &movie.Rating, &movie.IsSuperHero)
+	if err == nil {
+		return c.JSON(http.StatusOK, movie)
 	}
 
 	return c.JSON(http.StatusNotFound, map[string]string{"error": "Movie not found"})
@@ -127,7 +121,8 @@ func createMovieHandler(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Rating must be between 0 and 10"})
 	}
 
-	movies = append(movies, newMovie)
+
+	db.Exec("INSERT INTO movies (imdb_id, title, year, rating, is_superhero) VALUES (?, ?, ?, ?, ?)", newMovie.ImdbID, newMovie.Title, newMovie.Year, newMovie.Rating, newMovie.IsSuperHero)
 	return c.JSON(http.StatusCreated, newMovie)
 }
 
@@ -136,7 +131,6 @@ func init() {
 	createMovieTable()
 	insertAllMovies(movies)
 }
-
 
 func conn() {
 	var err error
